@@ -1,0 +1,8 @@
+# 专用于服务器的最小配置；凭据由服务进程的环境注入。
+plugins:
+  http: {}
+  personal-bot: {}
+  adapter-satori:
+    $if: env.SATORI_ENDPOINT && env.SATORI_TOKEN
+    endpoint: ${{ env.SATORI_ENDPOINT }}
+    token: ${{ env.SATORI_TOKEN }}

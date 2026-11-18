@@ -1,0 +1,76 @@
+plugins:
+  personal-bot:six26t: {}
+  group:server:
+    server:md7lmr:
+      host: 127.0.0.1
+      port: 5140
+      maxPort: 5149
+    ~server-satori:gz24q2: {}
+    ~server-temp:g7s2qn: {}
+  group:basic:
+    ~admin:jblj34: {}
+    ~bind:bk4pv8: {}
+    commands:wqva27: {}
+    help:ph9z8i: {}
+    http:a2riet: {}
+    ~inspect:n1uqpj: {}
+    locales:280uxc: {}
+    proxy-agent:x93lqg: {}
+    rate-limit:vixurz: {}
+    telemetry:a04ywp: {}
+  group:console:
+    actions:vr3e71: {}
+    analytics:wvsfbb: {}
+    android:86wb6q:
+      $if: env.KOISHI_AGENT?.includes('Android')
+    ~auth:hjxkrx: {}
+    config:wo8z82: {}
+    console:2c3o9h:
+      open: false
+    dataview:aoyfoi: {}
+    desktop:1cw1sw:
+      $if: env.KOISHI_AGENT?.includes('Desktop')
+    explorer:6ztper: {}
+    logger:fw1riu: {}
+    insight:5dgfcj: {}
+    market:wc2zdu:
+      search:
+        endpoint: https://registry.koishi.chat/index.json
+    notifier:o9if7a: {}
+    oobe:p2261d: {}
+    sandbox:sz1kaf: {}
+    status:mq58l3: {}
+    theme-vanilla:g2bj0y: {}
+  group:storage:
+    ~database-mongo:zpeath:
+      database: koishi
+    ~database-mysql:pcyx8x:
+      database: koishi
+    ~database-postgres:uf04to:
+      database: koishi
+    database-sqlite:62dxtt:
+      path: data/koishi.db
+    assets-local:r2j7uk: {}
+  group:adapter:
+    ~adapter-dingtalk:wtylu6: {}
+    ~adapter-discord:cmfrsv: {}
+    ~adapter-kook:fouq1x: {}
+    ~adapter-lark:hwvrdi: {}
+    ~adapter-line:spx4yi: {}
+    ~adapter-mail:1uih6a: {}
+    ~adapter-matrix:6vosov: {}
+    ~adapter-qq:0bok1r: {}
+    adapter-satori:oeptgt:
+      $if: env.SATORI_ENDPOINT && env.SATORI_TOKEN
+      endpoint: ${{ env.SATORI_ENDPOINT }}
+      token: ${{ env.SATORI_TOKEN }}
+    ~adapter-slack:y2v0zc: {}
+    ~adapter-telegram:xxp8u3: {}
+    ~adapter-wechat-official:mjn7oh: {}
+    ~adapter-wecom:vq1e0d: {}
+    ~adapter-whatsapp:p14s4g: {}
+    ~adapter-zulip:03c3yp: {}
+  group:develop:
+    $if: env.NODE_ENV === 'development'
+    hmr:d3c8yj:
+      root: .
