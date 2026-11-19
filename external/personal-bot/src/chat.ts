@@ -1,3 +1,4 @@
+import { modelConfig } from './models'
 import { PublicError } from './public-error'
 
 type Message = { role: 'user' | 'assistant', content: string }
@@ -11,6 +12,7 @@ type ResponseMessage = {
 type ProviderReply = {
   candidates?: { content?: { parts?: GeminiPart[] } }[]
   output?: ResponseMessage[]
+  choices?: { message?: { content?: string, refusal?: string } }[]
 }
 
 const outputTokens = 2048
@@ -19,33 +21,6 @@ const responseByteLimit = 256 * 1024
 function clipped(text: string, limit: number) {
   if (text.length <= limit) return text
   return text.slice(0, limit).replace(/[\uD800-\uDBFF]$/, '')
-}
-
-function configuration() {
-  const provider = process.env.AI_PROVIDER?.trim().toLowerCase()
-  let keyName: string
-  switch (provider) {
-    case 'openai':
-      keyName = 'OPENAI_API_KEY'
-      break
-    case 'xai':
-    case 'grok':
-      keyName = 'XAI_API_KEY'
-      break
-    case 'gemini':
-      keyName = 'GEMINI_API_KEY'
-      break
-    default:
-      throw new PublicError('请先将 AI_PROVIDER 设为 gemini、grok 或 openai。')
-  }
-
-  const model = process.env.AI_MODEL?.trim()
-  if (!model || !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(model)) {
-    throw new PublicError('请在 AI_MODEL 中填写有效的模型 ID。')
-  }
-  const key = process.env[keyName]?.trim()
-  if (!key) throw new PublicError(`请先配置 ${keyName}。`)
-  return { provider, model, key }
 }
 
 async function readReply(response: Response): Promise<ProviderReply> {
@@ -63,10 +38,13 @@ async function readReply(response: Response): Promise<ProviderReply> {
   return JSON.parse(Buffer.concat(chunks, size).toString('utf8'))
 }
 
-function visibleReply(reply: ProviderReply, gemini: boolean): string {
+function visibleReply(reply: ProviderReply, protocol: string): string {
   let parts: (string | undefined)[]
-  if (gemini) {
+  if (protocol === 'gemini') {
     parts = reply.candidates?.[0]?.content?.parts?.filter(part => !part.thought).map(part => part.text) ?? []
+  } else if (protocol === 'openai-compatible') {
+    const message = reply.choices?.[0]?.message
+    parts = [message?.content || message?.refusal]
   } else {
     const messages = reply.output?.filter(item =>
       item.type === 'message' && item.role === 'assistant' && item.phase !== 'commentary'
@@ -81,18 +59,17 @@ function visibleReply(reply: ProviderReply, gemini: boolean): string {
   return clipped(text, 2000)
 }
 
-export async function chat(system: string, history: Message[], text: string): Promise<string> {
-  const { provider, model, key } = configuration()
+export async function chat(system: string, history: Message[], text: string, config = modelConfig()): Promise<string> {
+  const { protocol, model, key, base } = config
   if (system.length > 8192) throw new PublicError('人设和系统提示过长，请缩短后重试。')
   if (text.length > 4096) throw new PublicError('这条消息过长，请分段发送。')
   const messages = history.slice(-12).map(({ role, content }) => ({ role, content: clipped(content, 2048) }))
   messages.push({ role: 'user', content: text })
-  const gemini = provider === 'gemini'
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   let url: string
   let body: object
-  if (gemini) {
-    url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`
+  if (protocol === 'gemini') {
+    url = `${base}/models/${encodeURIComponent(model)}:generateContent`
     headers['x-goog-api-key'] = key
     body = {
       systemInstruction: { parts: [{ text: system }] },
@@ -103,11 +80,14 @@ export async function chat(system: string, history: Message[], text: string): Pr
       generationConfig: { maxOutputTokens: outputTokens },
     }
   } else {
-    url = provider === 'openai' ? 'https://api.openai.com/v1/responses' : 'https://api.x.ai/v1/responses'
     headers.Authorization = `Bearer ${key}`
-    body = {
-      model, input: [{ role: 'system', content: system }, ...messages],
-      store: false, max_output_tokens: outputTokens,
+    const input = [{ role: 'system', content: system }, ...messages]
+    if (protocol === 'openai-compatible') {
+      url = base + '/chat/completions'
+      body = { model, messages: input, max_tokens: outputTokens }
+    } else {
+      url = base + '/responses'
+      body = { model, input, store: false, max_output_tokens: outputTokens }
     }
   }
 
@@ -118,7 +98,7 @@ export async function chat(system: string, history: Message[], text: string): Pr
       method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal: controller.signal,
     })
     if (!response.ok) throw new PublicError(`模型请求失败（HTTP ${response.status}）。`)
-    return visibleReply(await readReply(response), gemini)
+    return visibleReply(await readReply(response), protocol)
   } catch (error) {
     if (error instanceof PublicError) throw error
     if (controller.signal.aborted) throw new PublicError('模型请求超时，请稍后重试。')

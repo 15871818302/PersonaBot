@@ -2,8 +2,9 @@ require('esbuild-register')
 const assert = require('node:assert/strict')
 const { beforeEach, afterEach, test } = require('node:test')
 const { chat } = require('../src/chat.ts')
+const { listModels, modelConfig } = require('../src/models.ts')
 
-const envNames = ['AI_PROVIDER', 'AI_MODEL', 'GEMINI_API_KEY', 'XAI_API_KEY', 'OPENAI_API_KEY']
+const envNames = ['AI_PROVIDER', 'AI_MODEL', 'AI_BASE_URL', 'AI_API_KEY', 'AI_KEY_ENV', 'AI_PRESETS', 'GEMINI_API_KEY', 'XAI_API_KEY', 'OPENAI_API_KEY']
 const originalEnv = Object.fromEntries(envNames.map(key => [key, process.env[key]]))
 const realFetch = global.fetch
 const history = [{ role: 'user', content: '你好' }, { role: 'assistant', content: '在呢' }]
@@ -11,7 +12,8 @@ const history = [{ role: 'user', content: '你好' }, { role: 'assistant', conte
 beforeEach(() => {
   Object.assign(process.env, {
     AI_PROVIDER: 'gemini', AI_MODEL: 'sample-model', GEMINI_API_KEY: 'gemini-key',
-    XAI_API_KEY: 'grok-key', OPENAI_API_KEY: 'openai-key',
+    XAI_API_KEY: 'grok-key', OPENAI_API_KEY: 'openai-key', AI_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta',
+    AI_API_KEY: '', AI_KEY_ENV: '', AI_PRESETS: '',
   })
   global.fetch = () => assert.fail('unexpected fetch')
 })
@@ -50,6 +52,7 @@ for (const [provider, host, token] of [
 ]) {
   test(provider + ' uses its own Responses endpoint, key, and explicit history', async () => {
     process.env.AI_PROVIDER = provider
+    process.env.AI_BASE_URL = 'https://' + host + '/v1'
     let request
     global.fetch = async (url, options) => {
       request = new Request(url, options)
@@ -70,6 +73,109 @@ for (const [provider, host, token] of [
     assert.equal(body.max_output_tokens, 2048)
   })
 }
+
+test('custom base URLs retain the gateway prefix for native Gemini and Responses', async () => {
+  process.env.AI_BASE_URL = 'https://gateway.example/proxy/v2/'
+  for (const [provider, path] of [['gemini', 'models/sample-model:generateContent'], ['grok', 'responses']]) {
+    process.env.AI_PROVIDER = provider
+    let sent
+    global.fetch = async (url) => {
+      sent = String(url)
+      return Response.json(provider === 'gemini'
+        ? { candidates: [{ content: { parts: [{ text: 'ok' }] } }] }
+        : { output: [{ role: 'assistant', type: 'message', content: [{ type: 'output_text', text: 'ok' }] }] })
+    }
+    assert.equal(await chat('s', [], 'x'), 'ok')
+    assert.equal(sent, 'https://gateway.example/proxy/v2/' + path)
+  }
+})
+
+test('Grok keeps its configured spelling and accepts old lowercase choices', async () => {
+  process.env.AI_PROVIDER = 'Grok'
+  process.env.AI_MODEL = 'Example-Model'
+  const config = modelConfig({ name: 'grok' })
+  assert.equal(config.name, 'Grok')
+  assert.equal(config.provider, 'Grok')
+  assert.equal(config.model, 'Example-Model')
+  assert.equal(config.key, 'grok-key')
+  assert.match(listModels(), /^Grok（Example-Model）/)
+  assert.equal(modelConfig({ name: 'GROK' }).name, 'Grok')
+})
+
+test('mixed-case preset names and protocols resolve consistently from defaults and commands', async () => {
+  const preset = { provider: 'Gemini', model: 'Sample', baseUrl: 'https://gateway.example/v1', keyEnv: 'GEMINI_API_KEY' }
+  process.env.AI_PRESETS = JSON.stringify({ MyBot: preset })
+  process.env.AI_PROVIDER = 'mybot'
+  assert.equal(modelConfig().name, 'MyBot')
+  let sent
+  global.fetch = async (url, options) => {
+    sent = new Request(url, options)
+    return Response.json({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] })
+  }
+  assert.equal(await chat('s', [], 'hi', modelConfig({ name: 'MYBOT' })), 'ok')
+  assert.equal(sent.url, 'https://gateway.example/v1/models/Sample:generateContent')
+  assert.equal(sent.headers.get('x-goog-api-key'), 'gemini-key')
+  process.env.AI_PRESETS = JSON.stringify({ MyBot: preset, mybot: preset })
+  assert.throws(() => modelConfig(), /AI_PRESETS/)
+})
+
+test('Chat Completions sends gateway credentials, routed model ID and ordered history', async () => {
+  Object.assign(process.env, {
+    AI_PROVIDER: 'openai-compatible', AI_MODEL: 'vendor/grok-test',
+    AI_BASE_URL: 'https://gateway.example/openai/v1', AI_API_KEY: 'gateway-only',
+  })
+  let sent
+  global.fetch = async (url, options) => {
+    sent = new Request(url, options)
+    return Response.json({ choices: [{ message: { role: 'assistant', content: '收到', reasoning_content: 'private' } }] })
+  }
+  assert.equal(await chat('人设', history, '早安'), '收到')
+  assert.equal(sent.url, 'https://gateway.example/openai/v1/chat/completions')
+  assert.equal(sent.headers.get('authorization'), 'Bearer gateway-only')
+  assert.equal(sent.headers.get('x-goog-api-key'), null)
+  assert.equal(sent.redirect, 'error')
+  assert.deepEqual(await sent.json(), {
+    model: 'vendor/grok-test', messages: [{ role: 'system', content: '人设' }, ...history, { role: 'user', content: '早安' }],
+    max_tokens: 2048,
+  })
+})
+
+test('incomplete gateway configuration fails locally without disclosing its URL or using another key', async () => {
+  Object.assign(process.env, { AI_PROVIDER: 'openai-compatible', AI_API_KEY: 'gateway-only' })
+  for (const base of ['', 'bad-url', 'file:///tmp', 'https://user:secret@example.com', 'https://example.com/?key=secret', 'https://example.com/#secret']) {
+    process.env.AI_BASE_URL = base
+    await assert.rejects(chat('s', [], 'hi'), e => e.message.includes('AI_BASE_URL') && !e.message.includes('secret'))
+  }
+  process.env.AI_BASE_URL = 'https://example.com'
+  delete process.env.AI_API_KEY
+  await assert.rejects(chat('s', [], 'hi'), /AI_API_KEY/)
+})
+
+test('only configured services can be listed or selected, even if unrelated credentials exist', () => {
+  delete process.env.AI_PROVIDER
+  assert.match(listModels(), /尚未配置/)
+  assert.throws(() => modelConfig({ name: 'openai', model: 'sample' }), /未知/)
+  process.env.AI_PRESETS = JSON.stringify({
+    bedrock: { provider: 'openai-compatible', model: 'vendor/model', baseUrl: 'https://gateway.example/v1', keyEnv: 'AI_API_KEY' },
+    gemini: { provider: 'gemini', model: 'gem-test', baseUrl: 'https://proxy.example/v2', keyEnv: 'GEMINI_API_KEY' },
+  })
+  process.env.AI_API_KEY = 'gateway-only'
+  process.env.AI_PROVIDER = 'bedrock'
+  assert.equal(modelConfig().base, 'https://gateway.example/v1')
+  assert.equal(modelConfig().key, 'gateway-only')
+  const native = modelConfig({ name: 'gemini', model: 'custom' })
+  assert.equal(native.base, 'https://proxy.example/v2')
+  assert.equal(native.key, 'gemini-key')
+  assert.equal(native.model, 'custom')
+  assert.match(listModels(), /bedrock/)
+  assert.doesNotMatch(listModels(), /grok|openai/)
+  delete process.env.AI_PRESETS
+  process.env.AI_PROVIDER = 'gemini'
+  process.env.AI_KEY_ENV = 'AI_API_KEY'
+  assert.equal(modelConfig().key, 'gateway-only')
+  delete process.env.AI_BASE_URL
+  assert.throws(() => modelConfig(), /AI_BASE_URL/)
+})
 
 test('invalid config and oversized inputs fail before any request', async () => {
   let calls = 0

@@ -13,7 +13,7 @@ plugins:
     commands:wqva27: {}
     help:ph9z8i: {}
     http:a2riet: {}
-    ~inspect:n1uqpj: {}
+    inspect:n1uqpj: {}
     locales:280uxc: {}
     proxy-agent:x93lqg: {}
     rate-limit:vixurz: {}
@@ -59,11 +59,14 @@ plugins:
     ~adapter-line:spx4yi: {}
     ~adapter-mail:1uih6a: {}
     ~adapter-matrix:6vosov: {}
-    ~adapter-qq:0bok1r: {}
-    adapter-satori:oeptgt:
-      $if: env.SATORI_ENDPOINT && env.SATORI_TOKEN
-      endpoint: ${{ env.SATORI_ENDPOINT }}
-      token: ${{ env.SATORI_TOKEN }}
+    adapter-qq:0bok1r:
+      $if: env.QQ_APP_ID && env.QQ_APP_SECRET
+      id: ${{ env.QQ_APP_ID }}
+      secret: ${{ env.QQ_APP_SECRET }}
+      type: public
+      protocol: websocket
+      intents: 33554432
+      sandbox: ${{ env.QQ_SANDBOX === 'true' }}
     ~adapter-slack:y2v0zc: {}
     ~adapter-telegram:xxp8u3: {}
     ~adapter-wechat-official:mjn7oh: {}

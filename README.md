@@ -1,40 +1,67 @@
 # 个人 QQ 助手
 
-LLBot 登录机器人小号并提供 Satori 服务。Koishi 接收指令，直接调用所选 AI、天气或快递服务。可以先只开天气，再分别配置 AI 和快递。业务指令默认仅向白名单开放；`ping` 可用于检查连接。
+Koishi 使用 QQ 官方机器人适配器接收单聊和群 @ 消息，直接发送文字即可聊天，也可以用指令查询天气或快递。天气无需密钥。聊天和业务指令默认仅向白名单开放，`ping` 和 `inspect` 可在首次接入时使用。
 
 | 在 QQ 中发送 | 行为 |
 | --- | --- |
-| `聊天 你好` 或 `ai 你好` | 对当前用户的文字问题使用服务器指定的模型和角色 |
+| 私聊发 `你好`，或在已授权的群里 @机器人 发 `你好` | 使用当前用户选定的模型和预设角色聊天，首次使用服务器默认模型 |
+| `模型列表`、`当前模型` | 所有者查看本机配置的接口、预设或当前选择 |
+| `切换模型 厂商 模型ID`、`切换模型 预设名`、`切换模型 默认` | 所有者更改自己的模型或恢复默认值 |
 | `忘记聊天` | 清除当前用户在当前会话中的本地聊天历史 |
 | `天气 杭州` | 查询中国城市的当前气温、湿度、天气状况和北京时间 |
 | `快递 韵达 运单号` | 仅限授权私聊，返回单号末四位、状态和最新记录时间 |
 | `ping` | 回复 `pong` |
 
-## 本地开发与小号接入
+## 接入腾讯官方 QQ 机器人
 
-在本项目目录运行。已安装依赖的环境可跳过第一行。首次创建密钥文件时使用 `install`；已有文件时直接编辑，避免覆盖。
+1. 在 QQ 开放平台创建机器人，获取 **AppID** 和 **AppSecret**，确认应用已开通要测试的单聊或群 @ 场景。如果通过腾讯沙箱测试，先在平台添加测试成员或测试群。[腾讯接入文档](https://bot.q.qq.com/wiki/develop/api-v2/)
+2. 在项目目录安装锁定依赖，并在首次配置时创建私有环境文件。项目已包含 `@koishijs/plugin-adapter-qq`。[Koishi QQ 适配器](https://koishi.chat/zh-CN/plugins/adapter/qq)
 
-```bash
-corepack yarn install --immutable
-test -e .env.local || install -m 600 .env.example .env.local
-npm run dev
-```
+   ```bash
+   node .yarn/releases/yarn-4.5.3.cjs install --immutable
+   test -e .env.local || install -m 600 deploy/qq-bot.env.example .env.local
+   ```
 
-控制台只监听本地回环地址，默认端口 5140。从控制台进入沙盒，先发送 `ping`。要在沙盒测试业务命令，把当前沙盒的平台和用户 ID 写入 `BOT_ALLOWED_USERS`，修改环境后重启。沙盒和真实 QQ 分别授权。
+3. 编辑 `.env.local`，将 AppID 填入 `QQ_APP_ID`，AppSecret 填入 `QQ_APP_SECRET`。使用腾讯沙箱环境时设 `QQ_SANDBOX=true`，正式环境使用 `false`。运行 `npm run dev`。Koishi 会换取访问凭证，通过出站 WebSocket 订阅单聊和群 @ 事件。开放平台如要求配置 IP 白名单，请填写运行 Koishi 的机器访问公网时的出口 IP。[腾讯鉴权说明](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/interface-framework/api-use.html) · [腾讯事件订阅](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/interface-framework/event-emit.html)
+4. 用主号打开机器人的对话，发 `ping` 确认收到 `pong`，再发 `inspect`。把回复中的**平台名**和**用户 ID** 用英文冒号连接，写入 `BOT_ALLOWED_USERS`，例如 `qq:你的用户OpenID`。旧配置里的个人 QQ 号码需要换成这次查询的 ID。
+5. 需要群聊时，在目标群里 **@机器人 inspect**，把该次回复的用户 ID 加入 `BOT_ALLOWED_USERS`，群组 ID 加入 `BOT_ALLOWED_GROUPS`，两处均带 `qq:` 前缀。多个值用英文逗号分隔。重启 Koishi 后发 `天气 杭州` 验证授权。快递查询仅限已授权的私聊。
 
-1. 按 LLBot 官方安装向导启动接入层并扫码登录**机器人小号**。在 LLBot 启用 Satori，指定端口（例如 5600）及随机 token。宿主机部署 Koishi 时，将 Docker 中的 Satori 和 WebUI 端口仅发布到 `127.0.0.1`。跨机器联调用 SSH 隧道。[LLBot 安装](https://luckylillia.com/guide/choice_install) · [LLBot 对接 Koishi](https://luckylillia.com/guide/install_koishi)
-2. 在 Koishi 的 `.env.local` 设置 `SATORI_ENDPOINT=http://127.0.0.1:5600` 和对应的 `SATORI_TOKEN`。当前 LLBot 的 Satori 平台标识是 `llonebot`。例如主号为 123456789 时，填 `BOT_ALLOWED_USERS=llonebot:123456789`。这里填**发送指令的人**。群聊还需 `BOT_ALLOWED_GROUPS=llonebot:群号`，多个 ID 用英文逗号分隔。其他接入版本按其实际平台标识填写。[LLBot 登录信息实现](https://github.com/LLOneBot/LuckyLilliaBot/blob/main/src/satori/api/login/get.ts)
-3. 重启后，用主号私聊小号发送 `ping`、`天气 杭州`。群里按 Koishi 配置使用指令前缀或 @小号。每条业务指令都核对用户身份；快递在群聊中始终拒绝。普通消息不会自动发往模型。
+等待平台凭据期间也可运行 `npm run dev`。本地 Koishi 控制台通常在 `http://127.0.0.1:5140`，从控制台进入沙盒即可测试指令。沙盒业务指令使用该会话的 `inspect` 结果单独授权。
 
 ## 模型与酒馆角色
 
-在服务器或本地私有环境文件里填写 `AI_PROVIDER`、`AI_MODEL` 和所选服务的密钥。模型 ID 从自己账号可用的模型列表复制；OpenAI 和 xAI 使用支持 Responses API 的文本模型。切换模型后重启进程。
+在 `.env.local` 或服务器环境里配置要使用的服务。单个服务填写 `AI_PROVIDER`（接口格式）、`AI_MODEL`、`AI_BASE_URL` 和密钥。基础地址由你指定，包含版本前缀，例如 `https://gateway.example/v1`。如果密钥已经保存在某个环境变量里，将它的**变量名**填入 `AI_KEY_ENV` 即可复用。
 
-| AI_PROVIDER | 密钥变量 | 接口 |
-| --- | --- | --- |
-| `gemini` | `GEMINI_API_KEY` | [Google generateContent](https://ai.google.dev/api/generate-content) |
-| `grok` 或 `xai` | `XAI_API_KEY` | [xAI Responses](https://docs.x.ai/developers/rest-api-reference/inference/responses) |
-| `openai` | `OPENAI_API_KEY` | [OpenAI Responses](https://developers.openai.com/api/reference/resources/responses/methods/create) |
+| 接口格式 | 请求路径 |
+| --- | --- |
+| `openai-compatible` | `/chat/completions` |
+| `responses`（兼容原有的 `openai`、`grok`、`xai` 写法） | `/responses` |
+| `gemini` | `/models/{模型ID}:generateContent` |
+
+**通过 Amazon Bedrock 调用 Grok 的示例**（美国东部，使用 Bedrock API key 进行 Bearer 鉴权）。按账号已开通的区域和推理配置 ID 调整。AWS IAM Access Key / Secret Key 的 SigV4 签名属于另一种鉴权方式。[AWS Grok 模型与区域说明](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-xai-grok-4-7.html) · [Bedrock Chat Completions](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-chat-completions.html)
+
+```dotenv
+AI_PROVIDER=openai-compatible
+AI_BASE_URL=https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1
+AI_MODEL=us.xai.grok-4.7
+AI_API_KEY=你的Bedrock_API_key
+```
+
+第三方提供的 Grok 或 Gemini 如果使用 Chat Completions，沿用上例并替换地址、模型 ID 和密钥。如果提供 Gemini 原生接口，则用 `AI_PROVIDER=gemini`、该服务商的 `GEMINI_API_KEY` 及其基础地址。保存后重启 Koishi，用已授权的 QQ 账号私聊发送 `用一句话介绍自己`。[Gemini 原生接口](https://ai.google.dev/api/generate-content) · [Gemini 的 OpenAI 兼容接口](https://ai.google.dev/gemini-api/docs/openai)
+
+### 从 QQ 切换接口和模型
+
+用本人主号私聊机器人发送 `inspect`，将该用户的 `qq:OpenID` 同时填入 `BOT_OWNER_ID` 和 `BOT_ALLOWED_USERS`。管理权限仅绑定这一个 QQ 身份，`BOT_OWNER_ID` 留空即关闭管理指令。其他已授权用户继续使用 `AI_PROVIDER` 与 `AI_MODEL` 指定的默认模型。
+
+重启 Koishi 后，发送 `模型列表` 查看环境中配置的名称。发送 `切换模型 名称` 使用该服务配置的模型，也可以发送 `切换模型 名称 模型ID` 指定其他模型。发送 `当前模型` 查看选择，`切换模型 默认` 恢复 `AI_PROVIDER` 指定的服务。切换即时生效；下一次聊天只使用当前接口和模型的上下文。
+
+要在多个网关间切换，可在私有环境文件中一次性定义命名预设。例如下面的 `bedrock` 预设通过 `keyEnv` 读取环境变量 `BEDROCK_API_KEY`，可改成你已经存放该服务密钥的变量名。每个预设独立指定基础地址。`AI_PROVIDER=bedrock` 可将这个预设设为默认，直接复用它的模型、地址和密钥配置。编辑预设后重启 Koishi，再发 `切换模型 bedrock`；同一个接口也可用 `切换模型 bedrock 其他模型ID` 指定其他模型。
+
+```dotenv
+AI_PRESETS='{"bedrock":{"provider":"openai-compatible","model":"us.xai.grok-4.7","baseUrl":"https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1","keyEnv":"BEDROCK_API_KEY"}}'
+```
+
+选择按机器人和用户保存到 Koishi 工作目录下的 `data/model-preferences/`，重启后继续有效。使用容器或切换生产发布目录时请挂载或复用这个目录。状态文件只保存预设名或厂商名以及手动指定的模型 ID。
 
 “酒馆”按 SillyTavern 处理，本项目支持它的 **Character Card V2 JSON**。在酒馆的角色管理中编辑角色描述、性格、场景、开场白和示例对话，使用角色导出的 JSON 选项。默认使用[卡比角色卡](external/personal-bot/src/kirby.json)，已经编入发布包。若要换成其他角色，可指定单独的 JSON 文件。设置后重启即可；运行机器人时无需启动酒馆。[角色设计指南](https://docs.sillytavern.app/usage/core-concepts/characterdesign/) · [角色管理](https://docs.sillytavern.app/usage/characters/) · [示例角色卡](external/personal-bot/examples/qq-assistant.json)
 
@@ -54,7 +81,7 @@ BOT_PERSONA_FILE=external/personal-bot/examples/qq-assistant.json
 
 ## 构建产物并上传服务器
 
-本地运行以下命令。发布脚本使用明确的文件清单，仅包含编译后的业务代码、运行清单、Yarn 与锁文件、专用生产配置。生产配置启用 HTTP 客户端、业务插件和按凭据启用的 Satori 适配器，没有管理控制台。开发库的 `.env*`、角色私有文件、日志、数据库、LLBot 登录态和本机依赖均不打包。
+本地运行以下命令。发布脚本使用明确的文件清单，仅包含编译后的业务代码、运行清单、Yarn 与锁文件、专用生产配置。生产配置加载业务插件、身份查询和 HTTP 客户端，填好两项 QQ 凭据后启用官方适配器。发布包排除管理控制台、私有环境文件、日志、数据库和本机依赖。
 
 ```bash
 npm test
@@ -71,4 +98,4 @@ node .yarn/releases/yarn-4.5.3.cjs install --immutable
 
 在服务器上的私有目录独立创建生产环境文件，权限设为 600。用普通账号启动，例如 `node --env-file=/私有目录/qq-bot.env node_modules/koishi/bin.js start`（Node 26）。也可以用 systemd 的 `EnvironmentFile=` 与 `npm start`，将 `WorkingDirectory` 指向解压目录。先安装依赖再给运行进程注入密钥，避免安装脚本继承生产凭据。生产环境不需要开放 Koishi 入站端口。保留上一版解压目录即可切换代码回滚。
 
-密钥只填写在受限文件或服务器密钥管理工具中。不要通过 QQ、角色卡、截图、控制台调试日志或 Git 传递密钥。若密钥曾进入代码仓库或上传包，到供应商后台撤销并重签。LLBot 自身的授权、WebUI 密码和 QQ 登录卷留在接入层单独管理。
+密钥只填写在受限文件或服务器密钥管理工具中。不要通过 QQ、角色卡、截图、控制台调试日志或 Git 传递密钥。若密钥曾进入代码仓库或上传包，到供应商后台撤销并重签。
