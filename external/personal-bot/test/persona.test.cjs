@@ -28,7 +28,7 @@ test('loads the bundled Kirby card when no external card is configured', t => {
   const prompt = loadPersona()
   assert.match(prompt, /^你是卡比。/)
   assert.match(prompt, /复制能力/)
-  assert.match(prompt, /天气 杭州/)
+  assert.doesNotMatch(prompt, /天气 杭州/)
   assert.doesNotMatch(prompt, /\{\{/)
 })
 

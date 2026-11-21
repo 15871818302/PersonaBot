@@ -1,9 +1,24 @@
 import { createHash } from 'node:crypto'
+import { PublicError } from './public-error'
+
+const defaultEndpoints = {
+  WEATHER_GEOCODING_URL: 'https://geocoding-api.open-meteo.com/v1/search',
+  WEATHER_FORECAST_URL: 'https://api.open-meteo.com/v1/forecast',
+  KUAIDI100_QUERY_URL: 'https://poll.kuaidi100.com/poll/query.do',
+}
+
+export function queryEndpoint(name: keyof typeof defaultEndpoints) {
+  const url = new URL(process.env[name]?.trim() || defaultEndpoints[name])
+  if (url.protocol !== 'https:') throw new Error('query endpoint requires HTTPS')
+  return url
+}
 
 const maxResponseBytes = 256 * 1024
 
 async function requestJson(url: URL | string, options: RequestInit = {}) {
-  const response = await fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(8000) })
+  const timeout = AbortSignal.timeout(8000)
+  const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout
+  const response = await fetch(url, { ...options, redirect: 'error', signal })
   if (!response.ok || !response.body) {
     await response.body?.cancel()
     throw new Error('provider unavailable')
@@ -23,6 +38,25 @@ async function requestJson(url: URL | string, options: RequestInit = {}) {
     chunks.push(value)
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+export async function searchMeme(query: string, key: string, deadline: AbortSignal): Promise<{ content: string, url: string }[]> {
+  try {
+    const data = await requestJson('https://api.tavily.com/search', {
+      method: 'POST', signal: deadline,
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, search_depth: 'basic', max_results: 3 }),
+    })
+    if (!Array.isArray(data?.results)) return []
+    return data.results.slice(0, 3).flatMap((item: { content?: string, url?: string }) => {
+      if (typeof item?.content !== 'string' || !item.content.trim()) return []
+      const url = typeof item.url === 'string' && item.url.length <= 512 && /^https?:\/\//i.test(item.url) ? item.url : ''
+      return [{ content: item.content.trim().slice(0, 500), url }]
+    })
+  } catch {
+    if (deadline.aborted) throw new PublicError('这次聊天超时了，请稍后重试。')
+    return []
+  }
 }
 
 const weatherCodes: Record<number, string> = {
@@ -47,19 +81,21 @@ export async function weather(city: string): Promise<string> {
   }
   const name = city.trim().replace(/^(.{2,})市$/u, '$1')
   try {
-    const search = new URL('https://geocoding-api.open-meteo.com/v1/search')
-    search.search = new URLSearchParams({ name, count: '1', language: 'zh', countryCode: 'CN' }).toString()
+    const search = queryEndpoint('WEATHER_GEOCODING_URL')
+    for (const [key, value] of Object.entries({ name, count: '1', language: 'zh', countryCode: 'CN' })) {
+      search.searchParams.set(key, value)
+    }
     const places = await requestJson(search)
     const place = places.results?.[0]
     if (!place) return '未找到这个城市，请尝试城市简称或拼音。'
     if (place.country_code !== 'CN' || typeof place.name !== 'string' || !placeName.test(place.name)
       || !inRange(place.latitude, -90, 90) || !inRange(place.longitude, -180, 180)) return weatherFailure
 
-    const forecast = new URL('https://api.open-meteo.com/v1/forecast')
-    forecast.search = new URLSearchParams({
+    const forecast = queryEndpoint('WEATHER_FORECAST_URL')
+    for (const [key, value] of Object.entries({
       latitude: String(place.latitude), longitude: String(place.longitude), timezone: 'Asia/Shanghai',
       current: 'temperature_2m,relative_humidity_2m,weather_code',
-    }).toString()
+    })) forecast.searchParams.set(key, value)
     const { current } = await requestJson(forecast)
     if (!current || !inRange(current.temperature_2m, -100, 80) || !inRange(current.relative_humidity_2m, 0, 100)
       || !Number.isInteger(current.weather_code) || typeof current.time !== 'string'
@@ -67,7 +103,7 @@ export async function weather(city: string): Promise<string> {
     const region = typeof place.admin1 === 'string' && placeName.test(place.admin1) && place.admin1 !== place.name
       ? `（${place.admin1}）` : ''
     const condition = weatherCodes[current.weather_code] || '天气现象未知'
-    return `${place.name}${region} ${condition}，${current.temperature_2m}°C，相对湿度 ${current.relative_humidity_2m}%。\n北京时间 ${current.time.replace('T', ' ')} · Open-Meteo / GeoNames`
+    return `我帮你看过啦！${place.name}${region}现在${condition}，气温 ${current.temperature_2m}°C，相对湿度 ${current.relative_humidity_2m}%。\n北京时间 ${current.time.replace('T', ' ')} · Open-Meteo / GeoNames`
   } catch {
     return weatherFailure
   }
@@ -93,17 +129,17 @@ async function queryShipment(com: string, num: string, customer: string, key: st
   try {
     const param = JSON.stringify({ com, num, show: '0', order: 'desc', lang: 'zh' })
     const sign = createHash('md5').update(param + key + customer).digest('hex').toUpperCase()
-    const data = await requestJson('https://poll.kuaidi100.com/poll/query.do', {
+    const data = await requestJson(queryEndpoint('KUAIDI100_QUERY_URL'), {
       method: 'POST', body: new URLSearchParams({ customer, sign, param }),
     })
     if (String(data.status) !== '200' || data.com !== com || typeof data.nu !== 'string'
       || data.nu.toUpperCase() !== num || !Array.isArray(data.data)) return trackingFailure
-    if (!data.data.length) return '这个单号暂时没有物流记录。'
+    if (!data.data.length) return '我看了一眼，尾号 ' + num.slice(-4) + ' 的包裹还没有物流记录。过会儿再来找我看看吧。'
     if (typeof data.state !== 'string' && typeof data.state !== 'number') return trackingFailure
     const status = Object.hasOwn(shipmentStates, data.state) ? shipmentStates[data.state] : '状态待更新'
     const time = data.data[0]?.ftime
     const suffix = typeof time === 'string' && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(time) ? `\n最新记录 ${time}` : ''
-    return `单号尾号 ${num.slice(-4)}：${status}。${suffix}`
+    return `我帮你看了尾号 ${num.slice(-4)} 的包裹，物流上写的是「${status}」。${suffix}`
   } catch {
     return trackingFailure
   }

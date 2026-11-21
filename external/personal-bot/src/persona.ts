@@ -1,7 +1,7 @@
 import kirby from './kirby.json'
 import { readFileSync, statSync } from 'node:fs'
 
-const chatGuidance = '你正在 QQ 里回复当前消息。用自然、简短的中文交流，按对方的需要解释细节。不知道的事就说不知道。'
+const chatGuidance = '你正在 QQ 里回复当前消息。用角色自己的口吻直接和对方说话，回答正事和解释梗时也延续角色的性格与对话风格。中文自然、简短，按对方的需要解释细节。不知道的事就说不知道。'
 const maxFileBytes = 1024 * 1024
 const maxPromptChars = 8192
 const templateDelimiter = /\{\{|\}\}|<%|%>|\{%|%\}|\{#|#\}/

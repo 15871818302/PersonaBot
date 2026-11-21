@@ -37,7 +37,7 @@ function configuredModels(): Map<string, NamedPreset> {
 export function listModels() {
   const items = Array.from(configuredModels().values(), ({ name, model }) => model ? name + '（' + model + '）' : name)
   if (!items.length) return '尚未配置 AI 服务，请先填写 AI_PROVIDER 或 AI_PRESETS。'
-  return [...items, '用法：切换模型 名称 [模型ID]'].join('\n')
+  return [...items, '你挑一个吧！发「切换模型 名称」告诉我，想指定模型的话，再在名称后面加上模型 ID。'].join('\n')
 }
 
 export function modelConfig(choice?: ModelChoice) {

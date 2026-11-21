@@ -7,13 +7,13 @@ const originalFetch = global.fetch
 const originalEnv = { ...process.env }
 afterEach(() => {
   global.fetch = originalFetch
-  for (const key of ['KUAIDI100_CUSTOMER', 'KUAIDI100_KEY']) {
+  for (const key of ['KUAIDI100_CUSTOMER', 'KUAIDI100_KEY', 'KUAIDI100_QUERY_URL', 'WEATHER_GEOCODING_URL', 'WEATHER_FORECAST_URL']) {
     if (originalEnv[key] === undefined) delete process.env[key]
     else process.env[key] = originalEnv[key]
   }
 })
 
-test('Chinese city weather uses fixed hosts, current data and Beijing time', async () => {
+test('Chinese city weather uses default hosts, current data and Beijing time', async () => {
   const urls = []
   global.fetch = async (input, options) => {
     const url = new URL(input)
@@ -26,7 +26,8 @@ test('Chinese city weather uses fixed hosts, current data and Beijing time', asy
     return Response.json({ current: { time: '2026-11-18T21:45', temperature_2m: 11.5, relative_humidity_2m: 82, weather_code: 3 } })
   }
   const result = await weather('杭州市')
-  assert.match(result, /杭州/)
+  assert.match(result, /我帮你看过啦！杭州（浙江）/)
+  assert.match(result, /北京时间 2026-11-18 21:45 · Open-Meteo \/ GeoNames/)
   assert.match(result, /11\.5/)
   assert.match(result, /82%/)
   assert.match(result, /阴/)
@@ -36,6 +37,19 @@ test('Chinese city weather uses fixed hosts, current data and Beijing time', asy
   assert.equal(urls[0].searchParams.get('name'), '杭州')
   assert.equal(urls[0].searchParams.get('countryCode'), 'CN')
   assert.equal(urls[1].searchParams.get('timezone'), 'Asia/Shanghai')
+})
+
+test('both weather endpoints can be overridden independently', async () => {
+  process.env.WEATHER_GEOCODING_URL = 'https://geo.example/search?lang=cn'
+  process.env.WEATHER_FORECAST_URL = 'https://forecast.example/current'
+  const urls = []
+  global.fetch = async input => {
+    urls.push(new URL(input))
+    return Response.json({ results: [{ country_code: 'CN', name: '北京', latitude: 40, longitude: 116 }] })
+  }
+  await weather('北京')
+  assert.deepEqual(urls.map(url => url.origin + url.pathname), ['https://geo.example/search', 'https://forecast.example/current'])
+  assert.equal(urls[0].searchParams.get('lang'), 'cn')
 })
 
 test('invalid inputs, missing credentials and phone-verified carriers make no requests', async () => {
@@ -52,10 +66,11 @@ test('invalid inputs, missing credentials and phone-verified carriers make no re
 test('tracking signs the exact form payload, coalesces identical queries and returns only a status summary', async () => {
   process.env.KUAIDI100_CUSTOMER = 'test-customer'
   process.env.KUAIDI100_KEY = 'test-key'
+  process.env.KUAIDI100_QUERY_URL = 'https://parcel.example/query'
   let count = 0
   global.fetch = async (input, options) => {
     count++
-    assert.equal(String(input), 'https://poll.kuaidi100.com/poll/query.do')
+    assert.equal(String(input), 'https://parcel.example/query')
     assert.equal(options.method, 'POST')
     assert.equal(options.redirect, 'error')
     assert.ok(options.signal instanceof AbortSignal)
@@ -70,7 +85,7 @@ test('tracking signs the exact form payload, coalesces identical queries and ret
     ] })
   }
   const [first, second] = await Promise.all([track('圆通', 'YT12345678'), track('yuantong', 'YT12345678')])
-  assert.match(first, /签收/)
+  assert.match(first, /我帮你看了尾号 5678 的包裹，物流上写的是「签收」/)
   assert.match(first, /19:00/)
   assert.doesNotMatch(first, /private|YT12345678|test-key/)
   assert.equal(first, second)
@@ -84,7 +99,7 @@ test('private provider errors and malformed data never reach chat', async () => 
   global.fetch = async () => Response.json({ returnCode: '408', message: 'private diagnostic' })
   assert.doesNotMatch(await track('韵达', 'YD88888888'), /private|408/)
   global.fetch = async () => { throw new Error('private connection details') }
-  assert.doesNotMatch(await weather('北京'), /private/)
+  assert.equal(await weather('北京'), '天气服务暂时不可用，请稍后重试。')
   global.fetch = async () => Response.json({ results: [] })
   assert.match(await weather('北京'), /未找到/)
 })

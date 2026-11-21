@@ -231,3 +231,81 @@ test('aborts a stalled request after the configured deadline', async t => {
   await assert.rejects(chat('s', [], 'hi'), /超时/)
   assert.equal(duration, 30_000)
 })
+
+test('unfamiliar memes with no usable search results ask for context', async () => {
+  for (const [phrase, response, expectedSearches] of [
+    ['草莓门', () => Response.json({ results: [] }), 1],
+    ['草莓门', () => new Response(null, { status: 429 }), 1],
+    ['其他会话的词', undefined, 0],
+    ['1234567890', undefined, 0],
+  ]) {
+    let searches = 0
+    let modelCalls = 0
+    global.fetch = async url => {
+      if (String(url) === 'https://api.tavily.com/search') {
+        searches++
+        return response()
+      }
+      modelCalls++
+      return Response.json({ candidates: [{ content: { parts: [modelCalls === 1
+        ? { functionCall: { name: 'research_meme', args: { phrase, focus: '含义' } } }
+        : { text: '证据不足' }] } }] })
+    }
+    const reply = await chat('卡比', [], '草莓门 1234567890', modelConfig(), { key: 'test-key',
+      acquire: () => () => {}, chargeFollowup() {} })
+    assert.match(reply, /上文/)
+    assert.equal(searches, expectedSearches)
+    assert.equal(modelCalls, 1 + expectedSearches)
+  }
+})
+
+for (const protocol of ['gemini', 'openai-compatible']) {
+  test(protocol + ' sends the matching native tool result and retains provider call metadata', async () => {
+    const requests = []
+    let charges = 0
+    const config = { ...modelConfig(), protocol }
+    global.fetch = async (url, options) => {
+      if (String(url).includes('api.tavily.com')) return Response.json({ results: [{ content: '草莓入队' }] })
+      const body = JSON.parse(options.body)
+      requests.push(body)
+      const args = { phrase: '草莓门', focus: '含义' }
+      if (protocol === 'gemini') {
+        const part = requests.length === 1 ? { thoughtSignature: 'sig', functionCall: { id: 'id', name: 'research_meme', args } }
+          : { text: requests.length === 2 ? '举草莓' : '我也入队' }
+        return Response.json({ candidates: [{ content: { parts: [part] } }] })
+      }
+      const message = requests.length === 1 ? { role: 'assistant', reasoning_content: 'sig', tool_calls: [
+        { id: 'id', type: 'function', function: { name: 'research_meme', arguments: JSON.stringify(args) } },
+      ] } : { content: requests.length === 2 ? '举草莓' : '我也入队' }
+      return Response.json({ choices: [{ message }] })
+    }
+    assert.equal(await chat('卡比', [], '草莓门', config, { key: 'search', acquire: () => () => {}, chargeFollowup() { charges++ } }), '我也入队')
+    assert.equal(charges, 2)
+    if (protocol === 'gemini') {
+      assert.equal(requests[0].tools[0].functionDeclarations[0].name, 'research_meme')
+      assert.equal(requests[2].toolConfig.functionCallingConfig.mode, 'NONE')
+      assert.equal(requests[2].contents.at(-2).parts[0].thoughtSignature, 'sig')
+      assert.equal(requests[2].contents.at(-1).parts[0].functionResponse.id, 'id')
+    } else {
+      assert.equal(requests[0].tools[0].function.name, 'research_meme')
+      assert.equal(requests[2].tool_choice, 'none')
+      assert.equal(requests[2].messages.at(-2).reasoning_content, 'sig')
+      assert.equal(requests[2].messages.at(-1).tool_call_id, 'id')
+    }
+  })
+}
+
+test('gateways rejecting a tool-enabled request can still reply through normal chat', async () => {
+  let charges = 0
+  const bodies = []
+  global.fetch = async (_, options) => {
+    const body = JSON.parse(options.body)
+    bodies.push(body)
+    if (body.tools) return new Response(null, { status: 400 })
+    return Response.json({ candidates: [{ content: { parts: [{ text: '在呢' }] } }] })
+  }
+  const reply = await chat('卡比', [], '你好', modelConfig(), { key: 'key', acquire: () => assert.fail(), chargeFollowup() { charges++ } })
+  assert.equal(reply, '在呢')
+  assert.equal(charges, 1)
+  assert.equal(bodies.length, 2)
+})
